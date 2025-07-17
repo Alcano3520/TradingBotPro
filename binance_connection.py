@@ -38,86 +38,130 @@ class BinanceConnection:
             return False
     
     def connect(self, api_key: str, api_secret: str, testnet: bool = False) -> bool:
-        """Conectar con Binance de forma robusta"""
+        """Conectar con Binance de forma robusta - SOLUCIÓN DEFINITIVA TIMESTAMP"""
         try:
-            # Sincronizar tiempo primero
-            self.sync_time_with_binance()
+            logging.info("🔄 Iniciando conexión con Binance...")
             
-            # Configurar exchange con opciones avanzadas
+            # PASO 1: Configurar exchange básico
             self.exchange = ccxt.binance({
                 'apiKey': api_key,
                 'secret': api_secret,
                 'sandbox': testnet,
                 'enableRateLimit': True,
-                'rateLimit': 100,
+                'rateLimit': 200,  # Más conservador
+                'timeout': 30000,
                 'options': {
                     'defaultType': 'spot',
                     'adjustForTimeDifference': True,
-                    'recvWindow': 10000,  # Ventana de tiempo más amplia
-                    'timeDifference': self.time_offset,  # Aplicar offset
-                },
-                'timeout': 30000,
-                'headers': {
-                    'X-MBX-APIKEY': api_key,
+                    'recvWindow': 60000,  # Ventana muy amplia: 60 segundos
                 }
             })
             
-            # Configurar función personalizada de timestamp
-            original_nonce = self.exchange.nonce
-            def custom_nonce():
-                return original_nonce() + self.time_offset
-            self.exchange.nonce = custom_nonce
+            # PASO 2: Forzar sincronización de tiempo
+            logging.info("🕐 Sincronizando tiempo con Binance...")
+            try:
+                # Obtener tiempo del servidor
+                server_time_response = self.exchange.public_get_time()
+                server_time = server_time_response['serverTime']
+                
+                # Tiempo local
+                local_time = int(time.time() * 1000)
+                
+                # Calcular diferencia
+                time_diff = server_time - local_time
+                
+                logging.info(f"⏰ Diferencia de tiempo: {time_diff}ms")
+                
+                # Aplicar corrección
+                self.exchange.options['timeDifference'] = time_diff
+                
+                # Esperar un momento para estabilizar
+                time.sleep(1)
+                
+            except Exception as sync_error:
+                logging.warning(f"⚠️ No se pudo sincronizar tiempo automáticamente: {sync_error}")
             
-            # Verificar conexión con retry
-            max_retries = 3
-            for attempt in range(max_retries):
+            # PASO 3: Verificar conexión con múltiples intentos
+            logging.info("🧪 Verificando conexión...")
+            
+            max_attempts = 5
+            for attempt in range(max_attempts):
                 try:
-                    # Test de conectividad
+                    logging.info(f"🔄 Intento {attempt + 1}/{max_attempts}")
+                    
+                    # Test básico
                     ping_result = self.exchange.public_get_ping()
+                    logging.info("✅ Ping exitoso")
                     
-                    # Verificar permisos
-                    balance = self.exchange.fetch_balance()
-                    
-                    # Verificar permisos de trading
+                    # Verificar cuenta
                     account_info = self.exchange.private_get_account()
+                    logging.info("✅ Información de cuenta obtenida")
                     
                     if not account_info.get('canTrade', False):
                         raise Exception("❌ API Key no tiene permisos de trading")
                     
-                    break
+                    # Test de balance
+                    balance = self.exchange.fetch_balance()
+                    logging.info("✅ Balance obtenido")
+                    
+                    # Si llegamos aquí, la conexión es exitosa
+                    self.is_connected = True
+                    
+                    usdt_balance = balance.get('USDT', {}).get('free', 0)
+                    logging.info(f"✅ CONEXIÓN EXITOSA")
+                    logging.info(f"📊 Modo: {'Testnet' if testnet else '🔴 PRODUCCIÓN - DINERO REAL'}")
+                    logging.info(f"💰 Balance USDT disponible: {usdt_balance:.2f}")
+                    logging.info(f"🎯 Listo para generar ganancias!")
+                    
+                    return True
                     
                 except ccxt.BaseError as e:
-                    if "timestamp" in str(e).lower() and attempt < max_retries - 1:
-                        logging.warning(f"⚠️ Error de timestamp, reintentando... ({attempt + 1}/{max_retries})")
-                        # Resincronizar tiempo
-                        self.sync_time_with_binance()
-                        time.sleep(1)
-                        continue
-                    else:
-                        raise e
+                    error_msg = str(e)
+                    logging.warning(f"⚠️ Intento {attempt + 1} falló: {error_msg}")
+                    
+                    if "timestamp" in error_msg.lower() or "-1021" in error_msg:
+                        # Error de timestamp, ajustar tiempo
+                        if attempt < max_attempts - 1:
+                            logging.info("🔧 Ajustando sincronización de tiempo...")
+                            
+                            # Ajuste más agresivo
+                            try:
+                                # Nuevo intento de sincronización
+                                response = requests.get('https://api.binance.com/api/v3/time', timeout=5)
+                                if response.status_code == 200:
+                                    server_time = response.json()['serverTime']
+                                    local_time = int(time.time() * 1000)
+                                    new_diff = server_time - local_time
+                                    
+                                    # Aplicar con margen de seguridad
+                                    self.exchange.options['timeDifference'] = new_diff + 1000  # +1 segundo extra
+                                    
+                                    logging.info(f"⚡ Nueva diferencia aplicada: {new_diff + 1000}ms")
+                                    
+                                    time.sleep(2)
+                                    continue
+                            except:
+                                pass
+                    
+                    elif "permission" in error_msg.lower() or "-2015" in error_msg:
+                        self.last_error = "❌ API Key inválida o sin permisos. Verifique sus credenciales."
+                        logging.error(self.last_error)
+                        return False
+                        
+                    elif attempt == max_attempts - 1:
+                        # Último intento fallido
+                        self.last_error = f"❌ Conexión fallida después de {max_attempts} intentos: {error_msg}"
+                        logging.error(self.last_error)
+                        return False
+                    
+                    # Esperar antes del siguiente intento
+                    time.sleep(2 ** attempt)  # Backoff exponencial
             
-            self.is_connected = True
-            logging.info("✅ Conectado exitosamente a Binance")
-            logging.info(f"📊 Modo: {'Testnet' if testnet else 'PRODUCCIÓN'}")
-            logging.info(f"💰 Balance USDT: {balance.get('USDT', {}).get('free', 0):.2f}")
+            return False
             
-            return True
-            
-        except ccxt.AuthenticationError as e:
-            self.last_error = f"❌ Error de autenticación: Verifique sus credenciales API"
-            logging.error(f"❌ Error de autenticación: {e}")
-            return False
-        except ccxt.PermissionDenied as e:
-            self.last_error = f"❌ Permisos insuficientes: Habilite trading en su API Key"
-            logging.error(f"❌ Permisos denegados: {e}")
-            return False
-        except ccxt.NetworkError as e:
-            self.last_error = f"❌ Error de red: {e}"
-            logging.error(f"❌ Error de red: {e}")
-            return False
         except Exception as e:
-            self.last_error = str(e)
-            logging.error(f"❌ Error conectando a Binance: {e}")
+            self.last_error = f"❌ Error crítico de conexión: {str(e)}"
+            logging.error(self.last_error)
             return False
     
     def get_balance(self) -> Dict[str, float]:
