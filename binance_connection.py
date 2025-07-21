@@ -9,109 +9,110 @@ import pandas as pd
 from decimal import Decimal, ROUND_DOWN
 
 class BinanceConnection:
-    """Conexión robusta y optimizada con Binance - SOLUCIONA ERRORES DE TIMESTAMP"""
+    """Conexión robusta con Binance - SOLUCIÓN DEFINITIVA TIMESTAMP"""
     
     def __init__(self):
         self.exchange = None
         self.is_connected = False
         self.last_error = None
         self.rate_limit_delay = 0.1
-        self.time_offset = 0  # Offset para sincronizar tiempo
         
-    def sync_time_with_binance(self):
-        """Sincronizar tiempo con el servidor de Binance"""
-        try:
-            # Obtener tiempo del servidor de Binance
-            response = requests.get('https://api.binance.com/api/v3/time', timeout=10)
-            server_time = response.json()['serverTime']
-            
-            # Calcular offset
-            local_time = int(time.time() * 1000)
-            self.time_offset = server_time - local_time
-            
-            logging.info(f"🕐 Tiempo sincronizado - Offset: {self.time_offset}ms")
-            return True
-            
-        except Exception as e:
-            logging.warning(f"⚠️ No se pudo sincronizar tiempo: {e}")
-            self.time_offset = 0
-            return False
-    
     def connect(self, api_key: str, api_secret: str, testnet: bool = False) -> bool:
-        """Conectar con Binance de forma robusta - SOLUCIÓN DEFINITIVA TIMESTAMP"""
+        """Conectar con Binance usando método robusto del timestamp"""
         try:
-            logging.info("🔄 Iniciando conexión con Binance...")
+            logging.info("🔄 Iniciando conexión robusta con Binance...")
             
-            # PASO 1: Configurar exchange básico
+            # MÉTODO 1: Configuración básica inicial
             self.exchange = ccxt.binance({
                 'apiKey': api_key,
                 'secret': api_secret,
                 'sandbox': testnet,
                 'enableRateLimit': True,
-                'rateLimit': 200,  # Más conservador
+                'rateLimit': 1200,  # Más conservador: 1.2 segundos
                 'timeout': 30000,
                 'options': {
                     'defaultType': 'spot',
                     'adjustForTimeDifference': True,
-                    'recvWindow': 60000,  # Ventana muy amplia: 60 segundos
+                    'recvWindow': 60000,  # 60 segundos de ventana
                 }
             })
             
-            # PASO 2: Forzar sincronización de tiempo
-            logging.info("🕐 Sincronizando tiempo con Binance...")
-            try:
-                # Obtener tiempo del servidor
-                server_time_response = self.exchange.public_get_time()
-                server_time = server_time_response['serverTime']
-                
-                # Tiempo local
-                local_time = int(time.time() * 1000)
-                
-                # Calcular diferencia
-                time_diff = server_time - local_time
-                
-                logging.info(f"⏰ Diferencia de tiempo: {time_diff}ms")
-                
-                # Aplicar corrección
-                self.exchange.options['timeDifference'] = time_diff
-                
-                # Esperar un momento para estabilizar
-                time.sleep(1)
-                
-            except Exception as sync_error:
-                logging.warning(f"⚠️ No se pudo sincronizar tiempo automáticamente: {sync_error}")
+            # MÉTODO 2: Sincronización manual robusta
+            logging.info("🕐 Sincronizando tiempo con servidor Binance...")
             
-            # PASO 3: Verificar conexión con múltiples intentos
+            # Obtener tiempo del servidor usando endpoint directo
+            try:
+                response = requests.get('https://api.binance.com/api/v3/time', timeout=10)
+                if response.status_code == 200:
+                    server_data = response.json()
+                    server_time = int(server_data['serverTime'])
+                    local_time = int(time.time() * 1000)
+                    time_offset = server_time - local_time
+                    
+                    logging.info(f"⏰ Servidor: {server_time}, Local: {local_time}")
+                    logging.info(f"⚡ Offset calculado: {time_offset}ms")
+                    
+                    # Aplicar offset con margen de seguridad
+                    safety_margin = 2000  # 2 segundos extra
+                    final_offset = time_offset + safety_margin
+                    
+                    self.exchange.options['timeDifference'] = final_offset
+                    logging.info(f"✅ Offset final aplicado: {final_offset}ms")
+                    
+                else:
+                    logging.warning("⚠️ No se pudo obtener tiempo del servidor")
+                    # Usar offset predeterminado conservador
+                    self.exchange.options['timeDifference'] = 5000  # 5 segundos
+                    
+            except Exception as time_error:
+                logging.warning(f"⚠️ Error sincronizando tiempo: {time_error}")
+                # Usar offset predeterminado muy conservador
+                self.exchange.options['timeDifference'] = 10000  # 10 segundos
+            
+            # MÉTODO 3: Verificación con múltiples intentos
             logging.info("🧪 Verificando conexión...")
             
-            max_attempts = 5
+            max_attempts = 3
             for attempt in range(max_attempts):
                 try:
-                    logging.info(f"🔄 Intento {attempt + 1}/{max_attempts}")
+                    logging.info(f"🔄 Intento de conexión {attempt + 1}/{max_attempts}")
                     
-                    # Test básico
+                    # Esperar antes de cada intento
+                    if attempt > 0:
+                        wait_time = 3 * attempt
+                        logging.info(f"⏳ Esperando {wait_time} segundos...")
+                        time.sleep(wait_time)
+                    
+                    # Test 1: Ping básico
+                    logging.info("📡 Probando ping...")
                     ping_result = self.exchange.public_get_ping()
                     logging.info("✅ Ping exitoso")
                     
-                    # Verificar cuenta
+                    # Test 2: Obtener información de cuenta
+                    logging.info("🔐 Verificando credenciales...")
                     account_info = self.exchange.private_get_account()
-                    logging.info("✅ Información de cuenta obtenida")
+                    logging.info("✅ Credenciales válidas")
                     
+                    # Test 3: Verificar permisos
                     if not account_info.get('canTrade', False):
-                        raise Exception("❌ API Key no tiene permisos de trading")
+                        self.last_error = "❌ API Key no tiene permisos de trading"
+                        logging.error(self.last_error)
+                        return False
                     
-                    # Test de balance
+                    logging.info("✅ Permisos de trading confirmados")
+                    
+                    # Test 4: Obtener balance
+                    logging.info("💰 Obteniendo balance...")
                     balance = self.exchange.fetch_balance()
-                    logging.info("✅ Balance obtenido")
+                    usdt_balance = balance.get('USDT', {}).get('free', 0)
                     
-                    # Si llegamos aquí, la conexión es exitosa
+                    # ¡CONEXIÓN EXITOSA!
                     self.is_connected = True
                     
-                    usdt_balance = balance.get('USDT', {}).get('free', 0)
-                    logging.info(f"✅ CONEXIÓN EXITOSA")
-                    logging.info(f"📊 Modo: {'Testnet' if testnet else '🔴 PRODUCCIÓN - DINERO REAL'}")
-                    logging.info(f"💰 Balance USDT disponible: {usdt_balance:.2f}")
-                    logging.info(f"🎯 Listo para generar ganancias!")
+                    logging.info("🎉 ¡CONEXIÓN EXITOSA!")
+                    logging.info(f"📊 Modo: {'⚠️ TESTNET' if testnet else '💰 PRODUCCIÓN - DINERO REAL'}")
+                    logging.info(f"💵 Balance USDT: {usdt_balance:.2f}")
+                    logging.info(f"🚀 Bot listo para generar ganancias!")
                     
                     return True
                     
@@ -120,52 +121,31 @@ class BinanceConnection:
                     logging.warning(f"⚠️ Intento {attempt + 1} falló: {error_msg}")
                     
                     if "timestamp" in error_msg.lower() or "-1021" in error_msg:
-                        # Error de timestamp, ajustar tiempo
-                        if attempt < max_attempts - 1:
-                            logging.info("🔧 Ajustando sincronización de tiempo...")
-                            
-                            # Ajuste más agresivo
-                            try:
-                                # Nuevo intento de sincronización
-                                response = requests.get('https://api.binance.com/api/v3/time', timeout=5)
-                                if response.status_code == 200:
-                                    server_time = response.json()['serverTime']
-                                    local_time = int(time.time() * 1000)
-                                    new_diff = server_time - local_time
-                                    
-                                    # Aplicar con margen de seguridad
-                                    self.exchange.options['timeDifference'] = new_diff + 1000  # +1 segundo extra
-                                    
-                                    logging.info(f"⚡ Nueva diferencia aplicada: {new_diff + 1000}ms")
-                                    
-                                    time.sleep(2)
-                                    continue
-                            except:
-                                pass
-                    
+                        # Error de timestamp - aumentar offset
+                        current_offset = self.exchange.options.get('timeDifference', 0)
+                        new_offset = current_offset + 5000  # Añadir 5 segundos más
+                        self.exchange.options['timeDifference'] = new_offset
+                        logging.info(f"🔧 Aumentando offset a: {new_offset}ms")
+                        
                     elif "permission" in error_msg.lower() or "-2015" in error_msg:
-                        self.last_error = "❌ API Key inválida o sin permisos. Verifique sus credenciales."
+                        self.last_error = "❌ API Key inválida o sin permisos"
                         logging.error(self.last_error)
                         return False
                         
-                    elif attempt == max_attempts - 1:
-                        # Último intento fallido
-                        self.last_error = f"❌ Conexión fallida después de {max_attempts} intentos: {error_msg}"
+                    if attempt == max_attempts - 1:
+                        self.last_error = f"❌ Conexión fallida: {error_msg}"
                         logging.error(self.last_error)
                         return False
-                    
-                    # Esperar antes del siguiente intento
-                    time.sleep(2 ** attempt)  # Backoff exponencial
             
             return False
             
         except Exception as e:
-            self.last_error = f"❌ Error crítico de conexión: {str(e)}"
+            self.last_error = f"❌ Error crítico: {str(e)}"
             logging.error(self.last_error)
             return False
     
     def get_balance(self) -> Dict[str, float]:
-        """Obtener balance actual con manejo de errores"""
+        """Obtener balance actual"""
         try:
             if not self.is_connected or not self.exchange:
                 return {}
@@ -183,26 +163,21 @@ class BinanceConnection:
             return {}
     
     def get_price(self, symbol: str) -> float:
-        """Obtener precio actual de un par con retry"""
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                if not self.is_connected or not self.exchange:
-                    return 0.0
-                    
-                time.sleep(self.rate_limit_delay)
-                ticker = self.exchange.fetch_ticker(symbol)
-                return float(ticker['last'])
+        """Obtener precio actual"""
+        try:
+            if not self.is_connected or not self.exchange:
+                return 0.0
                 
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    logging.error(f"❌ Error obteniendo precio {symbol}: {e}")
-                    return 0.0
-                time.sleep(1)
-        return 0.0
+            time.sleep(self.rate_limit_delay)
+            ticker = self.exchange.fetch_ticker(symbol)
+            return float(ticker['last'])
+            
+        except Exception as e:
+            logging.error(f"❌ Error obteniendo precio {symbol}: {e}")
+            return 0.0
     
     def get_klines(self, symbol: str, timeframe: str, limit: int = 100) -> pd.DataFrame:
-        """Obtener datos históricos con validación"""
+        """Obtener datos históricos"""
         try:
             if not self.is_connected or not self.exchange:
                 return pd.DataFrame()
@@ -211,13 +186,10 @@ class BinanceConnection:
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
             
             if not ohlcv or len(ohlcv) < 50:
-                logging.warning(f"⚠️ Datos insuficientes para {symbol}: {len(ohlcv) if ohlcv else 0} velas")
                 return pd.DataFrame()
             
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            
-            # Validar datos
             df = df.dropna()
             df = df[df['volume'] > 0]
             
@@ -228,38 +200,28 @@ class BinanceConnection:
             return pd.DataFrame()
     
     def place_market_buy(self, symbol: str, usdt_amount: float) -> Dict:
-        """Ejecutar compra a mercado con validaciones"""
+        """Ejecutar compra a mercado"""
         try:
             if not self.is_connected or not self.exchange:
                 return {'success': False, 'error': 'No conectado'}
             
-            # Obtener precio actual
             price = self.get_price(symbol)
             if price <= 0:
                 return {'success': False, 'error': 'No se pudo obtener precio'}
             
-            # Calcular cantidad
             quantity = usdt_amount / price
-            
-            # Obtener info del mercado para ajustar precision
             market = self.exchange.market(symbol)
             min_amount = market.get('limits', {}).get('amount', {}).get('min', 0)
             
             if quantity < min_amount:
                 return {'success': False, 'error': f'Cantidad mínima: {min_amount}'}
             
-            # Ajustar precisión
-            precision = market.get('precision', {}).get('amount', 8)
             quantity = self.exchange.amount_to_precision(symbol, quantity)
             
-            # Ejecutar orden
             time.sleep(self.rate_limit_delay)
             order = self.exchange.create_market_buy_order(symbol, float(quantity))
             
-            # Procesar resultado
             if order['status'] == 'closed' or order['filled'] > 0:
-                logging.info(f"✅ COMPRA EJECUTADA: {symbol} - {quantity} por ~${usdt_amount:.2f}")
-                
                 return {
                     'success': True,
                     'order_id': order['id'],
@@ -272,32 +234,23 @@ class BinanceConnection:
             else:
                 return {'success': False, 'error': 'Orden no completada'}
                 
-        except ccxt.InsufficientFunds:
-            return {'success': False, 'error': 'Fondos insuficientes'}
-        except ccxt.InvalidOrder as e:
-            return {'success': False, 'error': f'Orden inválida: {e}'}
         except Exception as e:
             logging.error(f"❌ Error ejecutando compra {symbol}: {e}")
             return {'success': False, 'error': str(e)}
     
     def place_market_sell(self, symbol: str, quantity: float) -> Dict:
-        """Ejecutar venta a mercado con validaciones"""
+        """Ejecutar venta a mercado"""
         try:
             if not self.is_connected or not self.exchange:
                 return {'success': False, 'error': 'No conectado'}
             
-            # Ajustar precisión
             market = self.exchange.market(symbol)
             quantity = self.exchange.amount_to_precision(symbol, quantity)
             
-            # Ejecutar orden
             time.sleep(self.rate_limit_delay)
             order = self.exchange.create_market_sell_order(symbol, float(quantity))
             
-            # Procesar resultado
             if order['status'] == 'closed' or order['filled'] > 0:
-                logging.info(f"✅ VENTA EJECUTADA: {symbol} - {quantity}")
-                
                 return {
                     'success': True,
                     'order_id': order['id'],
@@ -310,10 +263,6 @@ class BinanceConnection:
             else:
                 return {'success': False, 'error': 'Orden no completada'}
                 
-        except ccxt.InsufficientFunds:
-            return {'success': False, 'error': 'Fondos insuficientes'}
-        except ccxt.InvalidOrder as e:
-            return {'success': False, 'error': f'Orden inválida: {e}'}
         except Exception as e:
             logging.error(f"❌ Error ejecutando venta {symbol}: {e}")
             return {'success': False, 'error': str(e)}
@@ -347,7 +296,6 @@ class BinanceConnection:
             time.sleep(self.rate_limit_delay)
             balance = self.exchange.fetch_balance()
             
-            # Calcular estadísticas
             total_balance = sum([bal.get('total', 0) for bal in balance.values() if isinstance(bal, dict)])
             free_balance = sum([bal.get('free', 0) for bal in balance.values() if isinstance(bal, dict)])
             
