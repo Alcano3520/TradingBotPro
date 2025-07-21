@@ -503,6 +503,18 @@ class TradingBotGUI:
                                         relief=tk.RAISED,
                                         bd=2)
         self.close_all_button.pack(side=tk.LEFT, padx=5)
+        # Botón reset completo
+        self.reset_button = tk.Button(buttons_frame, 
+                                     text="🧹 RESET TODO",
+                                     command=self.reset_all_data, 
+                                     font=FONTS['normal'],
+                                     bg=COLORS['accent_yellow'], 
+                                     fg='black',
+                                     width=15, 
+                                     height=2,
+                                     relief=tk.RAISED,
+                                     bd=2)
+        self.reset_button.pack(side=tk.LEFT, padx=5)
         
         # Estado del bot (derecha)
         status_frame = tk.Frame(controls_frame, bg=COLORS['bg_medium'])
@@ -1146,7 +1158,7 @@ class TradingBotGUI:
     def schedule_ui_update(self):
         """Programar próxima actualización de UI"""
         if self.ui_update_active:
-            self.root.after(5000, self.update_ui_periodic)  # Cada 5 segundos
+            self.root.after(20000, self.update_ui_periodic)  # Cada 20 segundos
     
     def update_ui_periodic(self):
         """Actualización periódica de la UI"""
@@ -1226,57 +1238,87 @@ class TradingBotGUI:
                 logging.error(f"Error actualizando UI: {e}")    
     
     def update_positions_table_real(self, positions: Dict):
-        """Actualizar tabla con precios REALES de Binance"""
-        try:
-            # Limpiar tabla
-            for item in self.positions_tree.get_children():
-                self.positions_tree.delete(item)
-            
-            # Añadir posiciones con precios reales
-            for symbol, position in positions.items():
-                if not isinstance(position, dict) or position.get('quantity', 0) <= 0:
-                    continue
-                    
-                try:
-                    # Obtener precio REAL actual de Binance
-                    current_price = 0
-                    if self.trading_engine and self.trading_engine.binance.is_connected:
-                        current_price = self.trading_engine.binance.get_price(f"{symbol}USDT")
-                    
-                    entry_price = position.get('entry_price', 0)
-                    quantity = position.get('quantity', 0)
-                    
-                    if current_price > 0 and entry_price > 0:
-                        # Calcular P&L REAL
-                        pnl_percent = ((current_price - entry_price) / entry_price) * 100
-                        current_value = quantity * current_price
+            """Actualizar tabla SOLO con posiciones activas del BOT - MEJORADA"""
+            try:
+                # Limpiar tabla
+                for item in self.positions_tree.get_children():
+                    self.positions_tree.delete(item)
+                
+                if not positions:
+                    # Si no hay posiciones del bot, mostrar mensaje informativo
+                    self.positions_tree.insert('', 'end', values=(
+                        "No hay posiciones activas", "del bot de trading", "", "", "", "", ""
+                    ))
+                    return
+                
+                # Contador de posiciones reales
+                active_count = 0
+                
+                # Añadir SOLO posiciones del trading engine (bot)
+                for symbol, position in positions.items():
+                    if not isinstance(position, dict) or position.get('quantity', 0) <= 0:
+                        continue
                         
-                        # Formatear valores
-                        symbol_text = symbol
-                        quantity_text = f"{quantity:.6f}"
-                        entry_text = f"${entry_price:.2f}"
-                        current_text = f"${current_price:.2f}"
-                        pnl_text = f"{pnl_percent:+.2f}%"
-                        value_text = f"${current_value:.2f}"
+                    try:
+                        # Obtener precio REAL actual de Binance
+                        current_price = 0
+                        if self.trading_engine and self.trading_engine.binance.is_connected:
+                            current_price = self.trading_engine.binance.get_price(f"{symbol}USDT")
                         
-                        # Color según P&L REAL
-                        tags = ('profit',) if pnl_percent >= 0 else ('loss',)
+                        entry_price = position.get('entry_price', 0)
+                        quantity = position.get('quantity', 0)
                         
-                        # Insertar en tabla
+                        if current_price > 0 and entry_price > 0:
+                            # Calcular P&L REAL
+                            pnl_percent = ((current_price - entry_price) / entry_price) * 100
+                            current_value = quantity * current_price
+                            
+                            # Formatear valores para la tabla
+                            symbol_text = symbol.replace('USDT', '')  # Mostrar solo BTC, ETH, etc.
+                            quantity_text = f"{quantity:.6f}"
+                            entry_text = f"${entry_price:.6f}"
+                            current_text = f"${current_price:.6f}"
+                            pnl_text = f"{pnl_percent:+.2f}%"
+                            value_text = f"${current_value:.2f}"
+                            
+                            # Determinar color según P&L REAL
+                            if pnl_percent >= 0:
+                                tags = ('profit',)
+                            else:
+                                tags = ('loss',)
+                            
+                            # Insertar en tabla
+                            self.positions_tree.insert('', 'end', values=(
+                                symbol_text, quantity_text, entry_text, current_text, 
+                                pnl_text, value_text, "🔄 Activa"
+                            ), tags=tags)
+                            
+                            active_count += 1
+                            
+                    except Exception as e:
+                        logging.error(f"Error procesando posición {symbol}: {e}")
+                        # Insertar fila con error
                         self.positions_tree.insert('', 'end', values=(
-                            symbol_text, quantity_text, entry_text, current_text, 
-                            pnl_text, value_text, "🔄 Gestionar"
-                        ), tags=tags)
-                        
-                except Exception as e:
-                    logging.error(f"Error procesando posición {symbol}: {e}")
-            
-            # Configurar colores
-            self.positions_tree.tag_configure('profit', foreground=COLORS['accent_green'])
-            self.positions_tree.tag_configure('loss', foreground=COLORS['accent_red'])
-            
-        except Exception as e:
-            logging.error(f"Error actualizando tabla: {e}")
+                            symbol, "ERROR", "", "", "", "", "❌ Error"
+                        ), tags=('error',))
+                
+                # Configurar colores de las filas
+                self.positions_tree.tag_configure('profit', foreground=COLORS['accent_green'])
+                self.positions_tree.tag_configure('loss', foreground=COLORS['accent_red'])
+                self.positions_tree.tag_configure('error', foreground=COLORS['accent_yellow'])
+                
+                # Log solo si hay cambios importantes
+                if active_count > 0:
+                    logging.info(f"📊 Tabla de posiciones actualizada: {active_count} posiciones activas")
+                
+            except Exception as e:
+                logging.error(f"Error actualizando tabla de posiciones: {e}")
+                # Mostrar error en la tabla
+                for item in self.positions_tree.get_children():
+                    self.positions_tree.delete(item)
+                self.positions_tree.insert('', 'end', values=(
+                    "ERROR", "No se pudo", "actualizar", "la tabla", "", "", "❌"
+                ))
     def update_performance_chart(self):
         """Actualizar gráfico de rendimiento"""
         try:
@@ -1408,53 +1450,77 @@ class TradingBotGUI:
             logging.error(f"Error mostrando resumen: {e}")
     
     def add_log(self, message: str, level: str = "INFO"):
-        """Agregar mensaje detallado al log"""
-        try:
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            
-            # Formatear mensaje según el tipo
-            if "COMPRA EJECUTADA" in message or "BUY" in message:
-                icon = "🟢💰"
-                level = "BUY"
-            elif "VENTA EJECUTADA" in message or "SELL" in message:
-                icon = "🔴💸"
-                level = "SELL"
-            elif "ERROR" in message or "❌" in message:
-                icon = "❌"
-                level = "ERROR"
-            elif "✅" in message:
-                icon = "✅"
-                level = "SUCCESS"
-            elif "⚠️" in message:
-                icon = "⚠️"
-                level = "WARNING"
-            else:
-                icon = "ℹ️"
-                level = "INFO"
-            
-            log_message = f"[{timestamp}] {icon} {message}\n"
-            
-            # Añadir a log de actividad (solo si existe)
-            if hasattr(self, 'activity_text') and self.activity_text:
-                self.activity_text.insert(tk.END, log_message)
-                if hasattr(self, 'autoscroll_enabled') and self.autoscroll_enabled:
-                    self.activity_text.see(tk.END)
-                self.trim_log_text(self.activity_text)
-            
-            # Añadir a log principal (solo si existe)
-            if hasattr(self, 'logs_text') and self.logs_text:
-                self.logs_text.insert(tk.END, log_message)
-                if hasattr(self, 'autoscroll_enabled') and self.autoscroll_enabled:
-                    self.logs_text.see(tk.END)
-                self.trim_log_text(self.logs_text)
-            
-            # Log a archivo con más detalles
-            logging.info(f"[{level}] {message}")
-            
-        except Exception as e:
-            logging.info(message)
-            logging.error(f"Error en add_log GUI: {e}")
-    
+            """Agregar mensaje al log con CONTROL DE SPAM mejorado"""
+            try:
+                # Control anti-spam: evitar mensajes repetidos muy frecuentes
+                current_time = time.time()
+                if hasattr(self, '_last_messages'):
+                    # Si el mismo mensaje se repitió hace menos de 30 segundos, ignorar
+                    if message in self._last_messages:
+                        if current_time - self._last_messages[message] < 30:
+                            return
+                else:
+                    self._last_messages = {}
+                
+                # Actualizar timestamp del mensaje
+                self._last_messages[message] = current_time
+                
+                # Limpiar mensajes antiguos del cache (más de 5 minutos)
+                self._last_messages = {
+                    msg: timestamp for msg, timestamp in self._last_messages.items() 
+                    if current_time - timestamp < 300
+                }
+                
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                
+                # Formatear mensaje según el tipo
+                if "COMPRA EJECUTADA" in message or "BUY" in message:
+                    icon = "🟢💰"
+                    level = "BUY"
+                elif "VENTA EJECUTADA" in message or "SELL" in message:
+                    icon = "🔴💸"
+                    level = "SELL"
+                elif "ERROR" in message or "❌" in message:
+                    icon = "❌"
+                    level = "ERROR"
+                elif "✅" in message:
+                    icon = "✅"
+                    level = "SUCCESS"
+                elif "⚠️" in message:
+                    icon = "⚠️"
+                    level = "WARNING"
+                elif "📊 Dashboard actualizado" in message:
+                    icon = "📊"
+                    level = "UPDATE"
+                    # Los updates del dashboard son menos importantes
+                else:
+                    icon = "ℹ️"
+                    level = "INFO"
+                
+                log_message = f"[{timestamp}] {icon} {message}\n"
+                
+                # Añadir a log de actividad (solo si existe)
+                if hasattr(self, 'activity_text') and self.activity_text:
+                    self.activity_text.insert(tk.END, log_message)
+                    if hasattr(self, 'autoscroll_enabled') and self.autoscroll_enabled:
+                        self.activity_text.see(tk.END)
+                    self.trim_log_text(self.activity_text, max_lines=500)  # Reducido de 1000 a 500
+                
+                # Añadir a log principal (solo si existe)
+                if hasattr(self, 'logs_text') and self.logs_text:
+                    self.logs_text.insert(tk.END, log_message)
+                    if hasattr(self, 'autoscroll_enabled') and self.autoscroll_enabled:
+                        self.logs_text.see(tk.END)
+                    self.trim_log_text(self.logs_text, max_lines=500)  # Reducido de 1000 a 500
+                
+                # Log a archivo solo para mensajes importantes
+                if level in ['BUY', 'SELL', 'ERROR', 'SUCCESS', 'WARNING']:
+                    logging.info(f"[{level}] {message}")
+                
+            except Exception as e:
+                # Log básico sin GUI si hay error
+                logging.info(message)
+                logging.error(f"Error en add_log GUI: {e}")    
     
     def trim_log_text(self, text_widget, max_lines: int = 1000):
         """Mantener solo las últimas N líneas en un widget de texto"""
@@ -1621,8 +1687,69 @@ class TradingBotGUI:
             error_msg = f"Error en cierre de emergencia: {str(e)}"
             messagebox.showerror("Error", f"❌ {error_msg}")
             self.add_log(f"❌ {error_msg}", "ERROR")
-# ============ FUNCIÓN PRINCIPAL ============
 
+    def reset_all_data(self):
+            """Resetear TODOS los datos y métricas - FUNCIÓN DE EMERGENCIA"""
+            try:
+                self.add_log("🧹 INICIANDO RESET COMPLETO DE DATOS...")
+                
+                # Resetear variables internas
+                self.current_data = {}
+                self.positions = {}
+                self.balance_history = []
+                self.trade_log = []
+                
+                # Resetear métricas visuales
+                self.metric_cards['balance']['value'].config(text="$0.00")
+                self.metric_cards['pnl']['value'].config(text="$0.00 (0%)", fg=COLORS['accent_green'])
+                self.metric_cards['trades']['value'].config(text="0 operaciones")
+                self.metric_cards['positions']['value'].config(text="0 activas")
+                self.metric_cards['winrate']['value'].config(text="0%")
+                
+                # Resetear header
+                self.balance_label.config(text="💰 Balance: $0.00")
+                self.pnl_label.config(text="📈 P&L: $0.00", fg=COLORS['accent_green'])
+                self.status_label.config(text="🔴 DETENIDO", fg=COLORS['accent_red'])
+                
+                # Limpiar tabla de posiciones
+                for item in self.positions_tree.get_children():
+                    self.positions_tree.delete(item)
+                
+                # Limpiar variables de cache
+                if hasattr(self, '_last_messages'):
+                    self._last_messages = {}
+                if hasattr(self, '_last_log_time'):
+                    del self._last_log_time
+                if hasattr(self, 'bot_start_time'):
+                    del self.bot_start_time
+                
+                # Limpiar logs (opcional)
+                response = messagebox.askyesno(
+                    "🧹 Limpiar Logs", 
+                    "¿Desea también limpiar todos los logs?\n\n"
+                    "Esto eliminará el historial de mensajes."
+                )
+                
+                if response:
+                    if hasattr(self, 'activity_text'):
+                        self.activity_text.delete("1.0", tk.END)
+                    if hasattr(self, 'logs_text'):
+                        self.logs_text.delete("1.0", tk.END)
+                
+                self.add_log("✅ RESET COMPLETO FINALIZADO")
+                self.add_log("🔧 Sistema listo para nueva configuración")
+                
+                messagebox.showinfo(
+                    "Reset Completado", 
+                    "✅ Todos los datos han sido reseteados\n\n"
+                    "🔧 Configure nuevamente sus credenciales API\n"
+                    "🚀 El sistema está listo para operar"
+                )
+                
+            except Exception as e:
+                logging.error(f"Error en reset completo: {e}")
+                self.add_log(f"❌ Error en reset: {str(e)}", "ERROR")
+# ============ FUNCIÓN PRINCIPAL ============
 def main():
     """Función principal para ejecutar la GUI"""
     try:
