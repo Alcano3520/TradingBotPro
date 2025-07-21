@@ -1357,31 +1357,54 @@ class TradingBotGUI:
         except Exception as e:
             logging.error(f"Error mostrando resumen: {e}")
     
-    def add_log(self, message: str):
-        """Agregar mensaje al log de actividad"""
+    def add_log(self, message: str, level: str = "INFO"):
+        """Agregar mensaje detallado al log"""
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            log_message = f"[{timestamp}] {message}\n"
             
-            # Añadir a log de actividad
-            self.activity_text.insert(tk.END, log_message)
-            if self.autoscroll_enabled:
-                self.activity_text.see(tk.END)
+            # Formatear mensaje según el tipo
+            if "COMPRA EJECUTADA" in message or "BUY" in message:
+                icon = "🟢💰"
+                level = "BUY"
+            elif "VENTA EJECUTADA" in message or "SELL" in message:
+                icon = "🔴💸"
+                level = "SELL"
+            elif "ERROR" in message or "❌" in message:
+                icon = "❌"
+                level = "ERROR"
+            elif "✅" in message:
+                icon = "✅"
+                level = "SUCCESS"
+            elif "⚠️" in message:
+                icon = "⚠️"
+                level = "WARNING"
+            else:
+                icon = "ℹ️"
+                level = "INFO"
             
-            # Añadir a log principal
-            self.logs_text.insert(tk.END, log_message)
-            if self.autoscroll_enabled:
-                self.logs_text.see(tk.END)
+            log_message = f"[{timestamp}] {icon} {message}\n"
             
-            # Mantener solo últimas 1000 líneas en cada log
-            self.trim_log_text(self.activity_text)
-            self.trim_log_text(self.logs_text)
+            # Añadir a log de actividad (solo si existe)
+            if hasattr(self, 'activity_text') and self.activity_text:
+                self.activity_text.insert(tk.END, log_message)
+                if hasattr(self, 'autoscroll_enabled') and self.autoscroll_enabled:
+                    self.activity_text.see(tk.END)
+                self.trim_log_text(self.activity_text)
             
-            # Log a archivo también
-            logging.info(message)
+            # Añadir a log principal (solo si existe)
+            if hasattr(self, 'logs_text') and self.logs_text:
+                self.logs_text.insert(tk.END, log_message)
+                if hasattr(self, 'autoscroll_enabled') and self.autoscroll_enabled:
+                    self.logs_text.see(tk.END)
+                self.trim_log_text(self.logs_text)
+            
+            # Log a archivo con más detalles
+            logging.info(f"[{level}] {message}")
             
         except Exception as e:
-            logging.error(f"Error añadiendo log: {e}")
+            logging.info(message)
+            logging.error(f"Error en add_log GUI: {e}")
+    
     
     def trim_log_text(self, text_widget, max_lines: int = 1000):
         """Mantener solo las últimas N líneas en un widget de texto"""
