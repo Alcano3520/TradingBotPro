@@ -93,8 +93,12 @@ class TradingEngine:
         
         if success:
             balance = self.binance.get_balance()
-            self.start_balance = balance.get('USDT', 0)
-            
+            self.start_balance = balance.get('total_value_usdt', balance.get('USDT', 0))
+            # Reset completo de estadísticas
+            self.daily_trades = 0
+            self.total_fees = 0.0
+            self.positions = {}
+            self.last_trade_time = {}
             logging.info(f"✅ Conectado a Binance - Balance inicial: ${self.start_balance:.2f}")
             logging.info(f"📊 ANÁLISIS DE RENTABILIDAD:")
             logging.info(f"├── Take Profit: +{self.config['take_profit']*100}%")
@@ -464,56 +468,55 @@ class TradingEngine:
             logging.error(f"❌ Error guardando log de trade: {e}")
     
     def get_status_data(self) -> Dict:
-        """Obtener datos de estado para la GUI CON BALANCE TOTAL REAL"""
-        try:
-            balance = self.binance.get_balance()
-            
-            # Usar el nuevo balance total que incluye todas las criptos
-            current_balance = balance.get('USDT', 0)  # USDT libre para trading
-            total_account_value = balance.get('total_value_usdt', current_balance)  # VALOR TOTAL
-            crypto_positions = balance.get('crypto_positions', {})
-            
-            # Calcular valor de posiciones del bot
-            bot_positions_value = 0
-            bot_positions_pnl = 0
-            
-            for symbol, position in self.positions.items():
-                try:
-                    current_price = self.binance.get_price(symbol)
-                    if current_price > 0:
-                        position_value = position['quantity'] * current_price
-                        bot_positions_value += position_value
-                        
-                        # Calcular PNL no realizado del bot
-                        cost_basis = position['cost']
-                        pnl = position_value - cost_basis
-                        bot_positions_pnl += pnl
-                except:
-                    pass
-            
-            # PNL total (incluyendo cripto existentes)
-            total_pnl = total_account_value - self.start_balance if self.start_balance > 0 else 0
-            pnl_percent = (total_pnl / self.start_balance * 100) if self.start_balance > 0 else 0
-            
-            return {
-                'balance': current_balance,  # USDT libre
-                'total_account_value': total_account_value,  # VALOR TOTAL REAL
-                'positions_value': bot_positions_value,  # Valor posiciones del bot
-                'total_value': total_account_value,  # Para compatibilidad
-                'total_pnl': total_pnl,
-                'pnl_percent': pnl_percent,
-                'unrealized_pnl': bot_positions_pnl,
-                'active_positions': len(self.positions),
-                'daily_trades': self.daily_trades,
-                'total_fees': self.total_fees,
-                'positions': self.positions.copy(),
-                'crypto_positions': crypto_positions,  # Posiciones existentes
-                'is_running': self.is_running
-            }
-            
-        except Exception as e:
-            logging.error(f"❌ Error obteniendo datos de estado: {e}")
-            return {}
+            """Obtener datos de estado para la GUI"""
+            try:
+                balance = self.binance.get_balance()
+                
+                # Usar el balance total que incluye todas las criptomonedas
+                usdt_free = balance.get('USDT', 0)
+                total_account_value = balance.get('total_value_usdt', usdt_free)
+                
+                # Calcular valor de posiciones DEL BOT
+                bot_positions_value = 0
+                bot_positions_pnl = 0
+                
+                for symbol, position in self.positions.items():
+                    try:
+                        current_price = self.binance.get_price(symbol)
+                        if current_price > 0:
+                            position_value = position['quantity'] * current_price
+                            bot_positions_value += position_value
+                            
+                            # P&L no realizado del bot
+                            cost_basis = position['cost']
+                            pnl = position_value - cost_basis
+                            bot_positions_pnl += pnl
+                    except:
+                        pass
+                
+                # P&L total basado en balance inicial
+                total_pnl = total_account_value - self.start_balance if self.start_balance > 0 else 0
+                pnl_percent = (total_pnl / self.start_balance * 100) if self.start_balance > 0 else 0
+                
+                return {
+                    'balance': usdt_free,                    # USDT libre
+                    'total_account_value': total_account_value,  # Balance total real
+                    'positions_value': bot_positions_value,      # Valor posiciones bot
+                    'total_value': total_account_value,          # Para compatibilidad
+                    'total_pnl': total_pnl,
+                    'pnl_percent': pnl_percent,
+                    'unrealized_pnl': bot_positions_pnl,
+                    'active_positions': len(self.positions),
+                    'daily_trades': self.daily_trades,
+                    'total_fees': self.total_fees,
+                    'positions': self.positions.copy(),
+                    'is_running': self.is_running,
+                    'cycles_completed': getattr(self, 'cycles_completed', 0)
+                }
+                
+            except Exception as e:
+                logging.error(f"❌ Error obteniendo datos de estado: {e}")
+                return {}    
     
     def get_performance_summary(self) -> Dict:
         """Obtener resumen de rendimiento"""

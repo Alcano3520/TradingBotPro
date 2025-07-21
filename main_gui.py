@@ -862,7 +862,36 @@ class TradingBotGUI:
             # Conectar a Binance
             testnet = self.testnet_var.get()
             success = self.trading_engine.connect_exchange(api_key, api_secret, testnet)
+            if not success:
+                messagebox.showerror("Error", f"❌ No se pudo conectar a Binance: {self.trading_engine.binance.last_error}")
+                return
             
+            # ═══════════════════ RESET COMPLETO DE MÉTRICAS ═══════════════════
+            # Resetear todas las métricas a CERO para empezar limpio
+            self.metric_cards['balance']['value'].config(text=f"${self.trading_engine.start_balance:.2f}")
+            self.metric_cards['pnl']['value'].config(text="$0.00 (0%)", fg=COLORS['accent_green'])
+            self.metric_cards['trades']['value'].config(text="0 operaciones")
+            self.metric_cards['positions']['value'].config(text="0 activas")
+            self.metric_cards['winrate']['value'].config(text="0%")
+            
+            # Limpiar tabla de posiciones
+            for item in self.positions_tree.get_children():
+                self.positions_tree.delete(item)
+            
+            # Limpiar logs antiguos
+            if hasattr(self, 'activity_text'):
+                self.activity_text.delete("1.0", tk.END)
+            
+            # Reset de timing interno
+            if hasattr(self, '_last_log_time'):
+                del self._last_log_time
+            
+            # Log del reset
+            self.add_log("🔄 SISTEMA COMPLETAMENTE RESETEADO")
+            self.add_log(f"💰 Balance inicial establecido: ${self.trading_engine.start_balance:.2f}")
+            self.add_log("📊 Métricas iniciadas desde cero")
+            # ═══════════════════════════════════════════════════════════════════
+
             if not success:
                 messagebox.showerror("Error", f"❌ No se pudo conectar a Binance: {self.trading_engine.binance.last_error}")
                 return
@@ -1139,87 +1168,63 @@ class TradingBotGUI:
             self.schedule_ui_update()
     
     def update_from_engine(self, data: Dict):
-        """Actualizar UI con datos REALES del motor de trading"""
-        try:
-            if not data:
-                return
-            
-            self.current_data = data
-            
-            # Obtener datos reales de Binance si está conectado
-            real_balance = 0
-            real_positions_value = 0
-            real_pnl = 0
-            
-            if self.trading_engine and self.trading_engine.binance.is_connected:
-                try:
-                    # Balance real de USDT
-                    balance_data = self.trading_engine.binance.get_balance()
-                    real_balance = balance_data.get('USDT', 0)
-                    
-                    # Calcular valor real de posiciones
-                    positions = data.get('positions', {})
-                    for symbol, position in positions.items():
-                        if isinstance(position, dict) and position.get('quantity', 0) > 0:
-                            current_price = self.trading_engine.binance.get_price(f"{symbol}USDT")
-                            if current_price > 0:
-                                position_value = position['quantity'] * current_price
-                                real_positions_value += position_value
-                                
-                                # Calcular PNL real de esta posición
-                                entry_cost = position.get('cost', position['quantity'] * position.get('entry_price', 0))
-                                real_pnl += (position_value - entry_cost)
-                    
-                except Exception as e:
-                    logging.error(f"Error obteniendo datos reales: {e}")
-                    # Usar datos del engine como fallback
-                    real_balance = data.get('balance', 0)
-                    real_positions_value = data.get('positions_value', 0)
-                    real_pnl = data.get('unrealized_pnl', 0)
-            
-            # Calcular valores totales REALES
-            total_value = real_balance + real_positions_value
-            active_positions = len([p for p in data.get('positions', {}).values() 
-                                if isinstance(p, dict) and p.get('quantity', 0) > 0])
-            daily_trades = data.get('daily_trades', 0)
-            
-            # Calcular PNL porcentaje basado en balance inicial real
-            start_balance = getattr(self.trading_engine, 'start_balance', 100) if self.trading_engine else 100
-            pnl_percent = (real_pnl / start_balance * 100) if start_balance > 0 else 0
-            
-            # Actualizar tarjetas con VALORES REALES
-            self.metric_cards['balance']['value'].config(text=f"${total_value:.2f}")
-            
-            # P&L con color correcto
-            pnl_color = COLORS['accent_green'] if real_pnl >= 0 else COLORS['accent_red']
-            pnl_text = f"${real_pnl:+.2f} ({pnl_percent:+.1f}%)"
-            self.metric_cards['pnl']['value'].config(text=pnl_text, fg=pnl_color)
-            
-            self.metric_cards['positions']['value'].config(text=f"{active_positions} activas")
-            self.metric_cards['trades']['value'].config(text=f"{daily_trades} operaciones")
-            
-            # Calcular win rate real
-            win_rate = self.calculate_real_win_rate()
-            self.metric_cards['winrate']['value'].config(text=f"{win_rate:.1f}%")
-            
-            # Actualizar header con valores REALES
-            self.balance_label.config(text=f"💰 Balance: ${total_value:.2f}")
-            self.pnl_label.config(text=f"📈 P&L: ${real_pnl:+.2f}", fg=pnl_color)
-            
-            # Actualizar tabla de posiciones con precios REALES
-            self.update_positions_table_real(data.get('positions', {}))
-            
-            # Actualizar gráfico
-            self.update_performance_chart()
-            
-            # Actualizar información del sistema
-            self.update_system_info(data)
-            
-            # Log de actualización con valores reales
-            self.add_log(f"📊 Dashboard actualizado - Balance: ${total_value:.2f}, P&L: ${real_pnl:+.2f}")
-            
-        except Exception as e:
-            logging.error(f"Error actualizando UI: {e}")
+            """Actualizar UI con datos del trading engine - VERSIÓN CORREGIDA"""
+            try:
+                if not data:
+                    return
+                
+                self.current_data = data
+                
+                # Obtener datos reales del engine
+                usdt_free = data.get('balance', 0)  # USDT libre para trading
+                total_account_value = data.get('total_account_value', usdt_free)  # VALOR TOTAL REAL
+                total_pnl = data.get('total_pnl', 0)
+                active_positions = data.get('active_positions', 0)
+                daily_trades = data.get('daily_trades', 0)
+                
+                # Calcular PNL porcentaje
+                start_balance = getattr(self.trading_engine, 'start_balance', 100) if self.trading_engine else 100
+                pnl_percent = (total_pnl / start_balance * 100) if start_balance > 0 else 0
+                
+                # Actualizar tarjetas de métricas con valores REALES
+                self.metric_cards['balance']['value'].config(text=f"${total_account_value:.2f}")
+                
+                # P&L con color dinámico
+                pnl_color = COLORS['accent_green'] if total_pnl >= 0 else COLORS['accent_red']
+                pnl_text = f"${total_pnl:+.2f} ({pnl_percent:+.1f}%)"
+                self.metric_cards['pnl']['value'].config(text=pnl_text, fg=pnl_color)
+                
+                # Posiciones activas
+                self.metric_cards['positions']['value'].config(text=f"{active_positions} activas")
+                
+                # Trades del día
+                self.metric_cards['trades']['value'].config(text=f"{daily_trades} operaciones")
+                
+                # Win rate calculado
+                win_rate = self.calculate_real_win_rate()
+                self.metric_cards['winrate']['value'].config(text=f"{win_rate:.1f}%")
+                
+                # Actualizar header
+                self.balance_label.config(text=f"💰 Balance Total: ${total_account_value:.2f}")
+                self.pnl_label.config(text=f"📈 P&L: ${total_pnl:+.2f}", fg=pnl_color)
+                
+                # Actualizar tabla de posiciones activas DEL BOT
+                self.update_positions_table_real(data.get('positions', {}))
+                
+                # Actualizar gráfico
+                self.update_performance_chart()
+                
+                # Actualizar información del sistema
+                self.update_system_info(data)
+                
+                # Log de actualización (REDUCIDO para evitar spam)
+                if not hasattr(self, '_last_log_time') or time.time() - self._last_log_time > 60:
+                    self.add_log(f"📊 Dashboard actualizado - Balance: ${total_account_value:.2f}, P&L: ${total_pnl:+.2f}")
+                    self._last_log_time = time.time()
+                
+            except Exception as e:
+                logging.error(f"Error actualizando UI: {e}")    
+    
     def update_positions_table_real(self, positions: Dict):
         """Actualizar tabla con precios REALES de Binance"""
         try:
