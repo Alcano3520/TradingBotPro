@@ -73,7 +73,9 @@ class SimpleMarketAnalyzer:
             current_macd = float(macd_line.iloc[-1])
             
             # Calcular ratio de volumen
-            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
+            volume_ratio = (current_volume / avg_volume 
+                            if (avg_volume > 0 and not np.isnan(avg_volume) and np.isfinite(avg_volume)) 
+                            else 0)
             
             # ============ DATOS DE LA SEÑAL ============
             

@@ -249,7 +249,6 @@ class BinanceConnection:
                 logging.error(f"❌ Error obteniendo posiciones: {e}")
                 return {}
     def get_price(self, symbol: str) -> float:
-        """Obtener precio actual"""
         try:
             if not self.is_connected or not self.exchange:
                 return 0.0
@@ -258,9 +257,15 @@ class BinanceConnection:
             ticker = self.exchange.fetch_ticker(symbol)
             return float(ticker['last'])
             
+        except ccxt.NetworkError as e:
+            logging.warning(f"⚠️ Network error {symbol}: {e}")
+            return 0.0
+        except ccxt.RequestTimeout as e:
+            logging.warning(f"⚠️ Timeout {symbol}: {e}")
+            return 0.0
         except Exception as e:
             logging.error(f"❌ Error obteniendo precio {symbol}: {e}")
-            return 0.0
+            return 0.0      
     
     def get_klines(self, symbol: str, timeframe: str, limit: int = 100) -> pd.DataFrame:
         """Obtener datos históricos"""

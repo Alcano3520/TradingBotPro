@@ -1163,9 +1163,9 @@ class TradingBotGUI:
     def update_ui_periodic(self):
         """Actualización periódica de la UI"""
         try:
-            if self.is_running and self.trading_engine:
-                # Obtener datos actuales
-                status_data = self.trading_engine.get_status_data()
+            engine = self.trading_engine  # ✅ Reference local
+            if self.is_running and engine and hasattr(engine, 'binance') and engine.binance.is_connected:
+                status_data = engine.get_status_data()
                 self.update_from_engine(status_data)
             
             # Actualizar timestamp
@@ -1566,16 +1566,31 @@ class TradingBotGUI:
                 logging.info(message)
                 logging.error(f"Error en add_log GUI: {e}")    
     
-    def trim_log_text(self, text_widget, max_lines: int = 1000):
-        """Mantener solo las últimas N líneas en un widget de texto"""
+    def trim_log_text(self, text_widget, max_lines: int = 500):
+        """Mantener solo las últimas N líneas - VERSION ROBUSTA"""
         try:
-            lines = text_widget.get("1.0", tk.END).split('\n')
+            content = text_widget.get("1.0", tk.END)
+            lines = content.split('\n')
+            
             if len(lines) > max_lines:
                 # Mantener solo las últimas max_lines
+                new_content = '\n'.join(lines[-max_lines:])
                 text_widget.delete("1.0", tk.END)
-                text_widget.insert("1.0", '\n'.join(lines[-max_lines:]))
-        except:
-            pass
+                text_widget.insert("1.0", new_content)
+            
+            # Emergency cleanup si el contenido es muy grande
+            if len(content) > 1000000:  # 1MB
+                text_widget.delete("1.0", f"{max_lines//2}.0")
+                import gc
+                gc.collect()
+                
+        except Exception as e:
+            # Cleanup de emergencia si todo falla
+            try:
+                text_widget.delete("1.0", "100.0")  # Mantener solo primeras 100 líneas
+                logging.error(f"Emergency log cleanup: {e}")
+            except:
+                pass  # Último recurso
     
     def clear_logs(self):
         """Limpiar logs"""
