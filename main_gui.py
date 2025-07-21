@@ -1238,78 +1238,121 @@ class TradingBotGUI:
                 logging.error(f"Error actualizando UI: {e}")    
     
     def update_positions_table_real(self, positions: Dict):
-            """Actualizar tabla SOLO con posiciones activas del BOT - MEJORADA"""
+            """Actualizar tabla con TODAS las posiciones (bot + existentes)"""
             try:
                 # Limpiar tabla
                 for item in self.positions_tree.get_children():
                     self.positions_tree.delete(item)
                 
                 if not positions:
-                    # Si no hay posiciones del bot, mostrar mensaje informativo
+                    # Si no hay ninguna posición
                     self.positions_tree.insert('', 'end', values=(
-                        "No hay posiciones activas", "del bot de trading", "", "", "", "", ""
+                        "No hay posiciones", "en la cuenta", "", "", "", "", ""
                     ))
                     return
                 
-                # Contador de posiciones reales
-                active_count = 0
+                # Separar posiciones por tipo
+                bot_positions = []
+                existing_positions = []
                 
-                # Añadir SOLO posiciones del trading engine (bot)
                 for symbol, position in positions.items():
                     if not isinstance(position, dict) or position.get('quantity', 0) <= 0:
                         continue
                         
+                    if position.get('source') == 'bot':
+                        bot_positions.append((symbol, position))
+                    else:
+                        existing_positions.append((symbol, position))
+                
+                # Función para crear fila de posición
+                def create_position_row(symbol, position, is_bot=True):
                     try:
-                        # Obtener precio REAL actual de Binance
-                        current_price = 0
-                        if self.trading_engine and self.trading_engine.binance.is_connected:
-                            current_price = self.trading_engine.binance.get_price(f"{symbol}USDT")
-                        
-                        entry_price = position.get('entry_price', 0)
+                        current_price = position.get('current_price', 0)
+                        entry_price = position.get('entry_price', current_price)
                         quantity = position.get('quantity', 0)
                         
-                        if current_price > 0 and entry_price > 0:
-                            # Calcular P&L REAL
-                            pnl_percent = ((current_price - entry_price) / entry_price) * 100
+                        if is_bot and self.trading_engine and self.trading_engine.binance.is_connected:
+                            # Para posiciones del bot, obtener precio en tiempo real
+                            current_price = self.trading_engine.binance.get_price(f"{symbol}USDT")
+                        
+                        if current_price > 0 and quantity > 0:
+                            # Calcular valores
                             current_value = quantity * current_price
                             
-                            # Formatear valores para la tabla
-                            symbol_text = symbol.replace('USDT', '')  # Mostrar solo BTC, ETH, etc.
+                            if is_bot and entry_price > 0:
+                                # P&L real para posiciones del bot
+                                pnl_percent = ((current_price - entry_price) / entry_price) * 100
+                            else:
+                                # Para posiciones existentes, mostrar "N/A"
+                                pnl_percent = 0
+                            
+                            # Formatear valores
+                            symbol_display = symbol.replace('USDT', '')
                             quantity_text = f"{quantity:.6f}"
-                            entry_text = f"${entry_price:.6f}"
+                            entry_text = f"${entry_price:.6f}" if is_bot else "Existente"
                             current_text = f"${current_price:.6f}"
-                            pnl_text = f"{pnl_percent:+.2f}%"
+                            
+                            if is_bot:
+                                pnl_text = f"{pnl_percent:+.2f}%"
+                                action_text = "🤖 Bot"
+                            else:
+                                pnl_text = "N/A"
+                                action_text = "📦 Existente"
+                            
                             value_text = f"${current_value:.2f}"
                             
-                            # Determinar color según P&L REAL
-                            if pnl_percent >= 0:
-                                tags = ('profit',)
+                            # Determinar color
+                            if is_bot:
+                                if pnl_percent >= 0:
+                                    tags = ('bot_profit',)
+                                else:
+                                    tags = ('bot_loss',)
                             else:
-                                tags = ('loss',)
+                                tags = ('existing',)
                             
                             # Insertar en tabla
                             self.positions_tree.insert('', 'end', values=(
-                                symbol_text, quantity_text, entry_text, current_text, 
-                                pnl_text, value_text, "🔄 Activa"
+                                symbol_display, quantity_text, entry_text, current_text, 
+                                pnl_text, value_text, action_text
                             ), tags=tags)
                             
-                            active_count += 1
+                            return True
                             
                     except Exception as e:
-                        logging.error(f"Error procesando posición {symbol}: {e}")
-                        # Insertar fila con error
-                        self.positions_tree.insert('', 'end', values=(
-                            symbol, "ERROR", "", "", "", "", "❌ Error"
-                        ), tags=('error',))
+                        logging.error(f"Error creando fila para {symbol}: {e}")
+                        return False
+                    
+                    return False
                 
-                # Configurar colores de las filas
-                self.positions_tree.tag_configure('profit', foreground=COLORS['accent_green'])
-                self.positions_tree.tag_configure('loss', foreground=COLORS['accent_red'])
-                self.positions_tree.tag_configure('error', foreground=COLORS['accent_yellow'])
+                # Añadir posiciones del bot primero
+                bot_count = 0
+                for symbol, position in bot_positions:
+                    if create_position_row(symbol, position, is_bot=True):
+                        bot_count += 1
                 
-                # Log solo si hay cambios importantes
-                if active_count > 0:
-                    logging.info(f"📊 Tabla de posiciones actualizada: {active_count} posiciones activas")
+                # Añadir posiciones existentes
+                existing_count = 0
+                for symbol, position in existing_positions:
+                    if create_position_row(symbol, position, is_bot=False):
+                        existing_count += 1
+                
+                # Si hay posiciones, añadir fila de resumen
+                if bot_count > 0 or existing_count > 0:
+                    self.positions_tree.insert('', 'end', values=(
+                        "═══════════", "RESUMEN", "═══════════", "", "", "", ""
+                    ))
+                    self.positions_tree.insert('', 'end', values=(
+                        f"Total: {bot_count + existing_count}", f"Bot: {bot_count}", f"Existentes: {existing_count}", "", "", "", ""
+                    ))
+                
+                # Configurar colores
+                self.positions_tree.tag_configure('bot_profit', foreground=COLORS['accent_green'], background='#1a3a1a')
+                self.positions_tree.tag_configure('bot_loss', foreground=COLORS['accent_red'], background='#3a1a1a')
+                self.positions_tree.tag_configure('existing', foreground=COLORS['accent_blue'], background='#1a1a3a')
+                
+                # Log de resumen
+                if bot_count > 0 or existing_count > 0:
+                    logging.info(f"📊 Posiciones mostradas: {bot_count} del bot, {existing_count} existentes")
                 
             except Exception as e:
                 logging.error(f"Error actualizando tabla de posiciones: {e}")
@@ -1317,8 +1360,9 @@ class TradingBotGUI:
                 for item in self.positions_tree.get_children():
                     self.positions_tree.delete(item)
                 self.positions_tree.insert('', 'end', values=(
-                    "ERROR", "No se pudo", "actualizar", "la tabla", "", "", "❌"
-                ))
+                    "ERROR", "al cargar", "posiciones", "", "", "", "❌"
+                ))    
+    
     def update_performance_chart(self):
         """Actualizar gráfico de rendimiento"""
         try:

@@ -468,48 +468,74 @@ class TradingEngine:
             logging.error(f"❌ Error guardando log de trade: {e}")
     
     def get_status_data(self) -> Dict:
-            """Obtener datos de estado para la GUI"""
+            """Obtener datos de estado INCLUYENDO todas las posiciones de la cuenta"""
             try:
                 balance = self.binance.get_balance()
                 
-                # Usar el balance total que incluye todas las criptomonedas
+                # Balance USDT y total
                 usdt_free = balance.get('USDT', 0)
                 total_account_value = balance.get('total_value_usdt', usdt_free)
                 
-                # Calcular valor de posiciones DEL BOT
-                bot_positions_value = 0
-                bot_positions_pnl = 0
+                # Obtener TODAS las posiciones (bot + existentes)
+                all_positions = self.binance.get_all_positions()
                 
+                # Combinar posiciones del bot con posiciones existentes
+                combined_positions = {}
+                
+                # 1. Añadir posiciones del bot (tienen prioridad)
                 for symbol, position in self.positions.items():
+                    combined_positions[symbol] = position
+                    combined_positions[symbol]['source'] = 'bot'
+                
+                # 2. Añadir posiciones existentes que NO están en el bot
+                for symbol, position in all_positions.items():
+                    if symbol not in combined_positions:
+                        combined_positions[symbol] = position
+                
+                # Calcular valores totales
+                total_positions_value = 0
+                total_positions_pnl = 0
+                
+                for symbol, position in combined_positions.items():
                     try:
-                        current_price = self.binance.get_price(symbol)
-                        if current_price > 0:
-                            position_value = position['quantity'] * current_price
-                            bot_positions_value += position_value
+                        if position.get('source') == 'bot':
+                            # Posición del bot - P&L real calculado
+                            current_price = self.binance.get_price(f"{symbol}USDT")
+                            if current_price > 0:
+                                position_value = position['quantity'] * current_price
+                                total_positions_value += position_value
+                                
+                                # P&L basado en precio de entrada del bot
+                                cost_basis = position.get('cost', position['quantity'] * position.get('entry_price', current_price))
+                                pnl = position_value - cost_basis
+                                total_positions_pnl += pnl
+                        else:
+                            # Posición existente - usar valor actual
+                            position_value = position.get('current_value', 0)
+                            total_positions_value += position_value
+                            # Para posiciones existentes, P&L = 0 (no sabemos precio de entrada)
                             
-                            # P&L no realizado del bot
-                            cost_basis = position['cost']
-                            pnl = position_value - cost_basis
-                            bot_positions_pnl += pnl
-                    except:
-                        pass
+                    except Exception as e:
+                        logging.error(f"Error calculando posición {symbol}: {e}")
                 
                 # P&L total basado en balance inicial
                 total_pnl = total_account_value - self.start_balance if self.start_balance > 0 else 0
                 pnl_percent = (total_pnl / self.start_balance * 100) if self.start_balance > 0 else 0
                 
                 return {
-                    'balance': usdt_free,                    # USDT libre
-                    'total_account_value': total_account_value,  # Balance total real
-                    'positions_value': bot_positions_value,      # Valor posiciones bot
-                    'total_value': total_account_value,          # Para compatibilidad
+                    'balance': usdt_free,
+                    'total_account_value': total_account_value,
+                    'positions_value': total_positions_value,
+                    'total_value': total_account_value,
                     'total_pnl': total_pnl,
                     'pnl_percent': pnl_percent,
-                    'unrealized_pnl': bot_positions_pnl,
-                    'active_positions': len(self.positions),
+                    'unrealized_pnl': total_positions_pnl,
+                    'active_positions': len(combined_positions),
                     'daily_trades': self.daily_trades,
                     'total_fees': self.total_fees,
-                    'positions': self.positions.copy(),
+                    'positions': combined_positions,  # Todas las posiciones (bot + existentes)
+                    'bot_positions_only': self.positions.copy(),  # Solo posiciones del bot
+                    'existing_positions': all_positions,  # Solo posiciones existentes
                     'is_running': self.is_running,
                     'cycles_completed': getattr(self, 'cycles_completed', 0)
                 }

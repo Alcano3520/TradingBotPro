@@ -7,6 +7,7 @@ import requests
 from typing import Dict, List, Tuple, Optional
 import pandas as pd
 from decimal import Decimal, ROUND_DOWN
+from datetime import datetime
 
 class BinanceConnection:
     """Conexión robusta con Binance - SOLUCIÓN DEFINITIVA TIMESTAMP"""
@@ -189,6 +190,64 @@ class BinanceConnection:
             except Exception as e:
                 logging.error(f"❌ Error obteniendo balance: {e}")
                 return {}    
+    
+    def get_all_positions(self) -> Dict:
+            """Obtener TODAS las posiciones de criptomonedas en la cuenta"""
+            try:
+                if not self.is_connected or not self.exchange:
+                    return {}
+                    
+                time.sleep(self.rate_limit_delay)
+                balance = self.exchange.fetch_balance()
+                
+                positions = {}
+                
+                for symbol, bal in balance.items():
+                    if isinstance(bal, dict) and bal.get('total', 0) > 0:
+                        total_amount = bal.get('total', 0)
+                        free_amount = bal.get('free', 0)
+                        
+                        # Ignorar USDT ya que es nuestra moneda base
+                        if symbol == 'USDT':
+                            continue
+                        
+                        # Solo incluir si hay cantidad significativa
+                        if total_amount < 0.000001:  # Muy pequeño, ignorar
+                            continue
+                            
+                        try:
+                            # Obtener precio actual
+                            ticker_symbol = f"{symbol}USDT"
+                            ticker = self.exchange.fetch_ticker(ticker_symbol)
+                            current_price = float(ticker['last'])
+                            current_value = total_amount * current_price
+                            
+                            # Solo incluir si vale más de $0.10
+                            if current_value < 0.10:
+                                continue
+                            
+                            positions[symbol] = {
+                                'symbol': symbol,
+                                'quantity': total_amount,
+                                'free': free_amount,
+                                'current_price': current_price,
+                                'current_value': current_value,
+                                'entry_price': current_price,  # No sabemos el precio de entrada real
+                                'entry_time': datetime.now(),  # Timestamp actual
+                                'source': 'existing'  # Marcar como posición existente
+                            }
+                            
+                            logging.info(f"📦 Posición detectada: {symbol} = {total_amount:.6f} = ${current_value:.2f}")
+                            
+                        except Exception as e:
+                            logging.warning(f"⚠️ No se pudo obtener precio de {symbol}: {e}")
+                
+                logging.info(f"📊 Total posiciones detectadas: {len(positions)}")
+                return positions
+                
+            except Exception as e:
+                logging.error(f"❌ Error obteniendo posiciones: {e}")
+                return {}
     def get_price(self, symbol: str) -> float:
         """Obtener precio actual"""
         try:
