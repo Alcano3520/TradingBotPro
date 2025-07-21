@@ -491,6 +491,18 @@ class TradingBotGUI:
                                     relief=tk.RAISED,
                                     bd=2)
         self.test_button.pack(side=tk.LEFT, padx=5)
+        # Botón cerrar todas las posiciones
+        self.close_all_button = tk.Button(buttons_frame, 
+                                        text="🚨 CERRAR TODO",
+                                        command=self.close_all_positions_emergency, 
+                                        font=FONTS['normal'],
+                                        bg=COLORS['accent_red'], 
+                                        fg='white',
+                                        width=15, 
+                                        height=2,
+                                        relief=tk.RAISED,
+                                        bd=2)
+        self.close_all_button.pack(side=tk.LEFT, padx=5)
         
         # Estado del bot (derecha)
         status_frame = tk.Frame(controls_frame, bg=COLORS['bg_medium'])
@@ -1506,7 +1518,104 @@ class TradingBotGUI:
         except Exception as e:
             messagebox.showerror("Error crítico", f"❌ Error ejecutando aplicación: {str(e)}")
             logging.error(f"Error crítico en GUI: {e}")
+    def close_all_positions_emergency(self):
+        """Cerrar TODAS las posiciones inmediatamente - Convertir todo a USDT"""
+        if not self.trading_engine or not self.trading_engine.binance.is_connected:
+            messagebox.showwarning("Advertencia", "⚠️ No está conectado a Binance")
+            return
+        
+        try:
+            # Confirmar acción
+            positions = self.trading_engine.positions
+            if not positions:
+                messagebox.showinfo("Información", "ℹ️ No hay posiciones activas para cerrar")
+                return
+            
+            active_count = len([p for p in positions.values() 
+                            if isinstance(p, dict) and p.get('quantity', 0) > 0])
+            
+            reply = messagebox.askyesno(
+                "🚨 CERRAR TODAS LAS POSICIONES",
+                f"⚠️ ¿Está seguro de cerrar TODAS las {active_count} posiciones?\n\n"
+                f"🔄 Esto convertirá todo a USDT inmediatamente\n"
+                f"💰 Realizará ganancias/pérdidas actuales\n\n"
+                f"Esta acción NO se puede deshacer."
+            )
+            
+            if reply:
+                self.add_log("🚨 INICIANDO CIERRE DE EMERGENCIA - Cerrando todas las posiciones", "WARNING")
+                
+                closed_count = 0
+                total_usdt_recovered = 0
+                errors = []
+                
+                for symbol, position in list(positions.items()):
+                    if not isinstance(position, dict) or position.get('quantity', 0) <= 0:
+                        continue
+                        
+                    try:
+                        quantity = position['quantity']
+                        current_price = self.trading_engine.binance.get_price(f"{symbol}USDT")
+                        
+                        if current_price <= 0:
+                            errors.append(f"{symbol}: No se pudo obtener precio")
+                            continue
+                        
+                        self.add_log(f"🔄 Cerrando posición {symbol}: {quantity:.6f} @ ${current_price:.2f}", "SELL")
+                        
+                        # Ejecutar venta
+                        result = self.trading_engine.binance.place_market_sell(f"{symbol}USDT", quantity)
+                        
+                        if result['success']:
+                            proceeds = result['cost']
+                            fee = result['fee']
+                            net_proceeds = proceeds - fee
+                            
+                            total_usdt_recovered += net_proceeds
+                            closed_count += 1
+                            
+                            # Remover de posiciones del engine
+                            if symbol in self.trading_engine.positions:
+                                del self.trading_engine.positions[symbol]
+                            
+                            self.add_log(f"✅ {symbol} vendido: +${net_proceeds:.2f} USDT (comisión: ${fee:.4f})", "SUCCESS")
+                            
+                        else:
+                            errors.append(f"{symbol}: {result['error']}")
+                            self.add_log(f"❌ Error vendiendo {symbol}: {result['error']}", "ERROR")
+                        
+                        # Pequeña pausa entre ventas
+                        time.sleep(0.5)
+                        
+                    except Exception as e:
+                        error_msg = f"{symbol}: {str(e)}"
+                        errors.append(error_msg)
+                        self.add_log(f"❌ Error cerrando {symbol}: {str(e)}", "ERROR")
+                
+                # Actualizar UI inmediatamente
+                if hasattr(self, 'trading_engine'):
+                    status_data = self.trading_engine.get_status_data()
+                    self.update_from_engine(status_data)
+                
+                # Mostrar resumen
+                summary = f"""🚨 CIERRE DE EMERGENCIA COMPLETADO
 
+    ✅ Posiciones cerradas: {closed_count}
+    💰 USDT recuperado: ${total_usdt_recovered:.2f}
+    ❌ Errores: {len(errors)}
+
+    {chr(10).join(errors) if errors else "✅ Todas las operaciones exitosas"}
+
+    🔄 Todas las posiciones han sido convertidas a USDT.
+    🤖 El bot continúa ejecutándose y buscará nuevas oportunidades."""
+                
+                messagebox.showinfo("✅ Cierre Completado", summary)
+                self.add_log(f"🎯 CIERRE COMPLETADO: {closed_count} posiciones → ${total_usdt_recovered:.2f} USDT", "SUCCESS")
+                
+        except Exception as e:
+            error_msg = f"Error en cierre de emergencia: {str(e)}"
+            messagebox.showerror("Error", f"❌ {error_msg}")
+            self.add_log(f"❌ {error_msg}", "ERROR")
 # ============ FUNCIÓN PRINCIPAL ============
 
 def main():

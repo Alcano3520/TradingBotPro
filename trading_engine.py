@@ -464,44 +464,50 @@ class TradingEngine:
             logging.error(f"❌ Error guardando log de trade: {e}")
     
     def get_status_data(self) -> Dict:
-        """Obtener datos de estado para la GUI"""
+        """Obtener datos de estado para la GUI CON BALANCE TOTAL REAL"""
         try:
             balance = self.binance.get_balance()
-            current_balance = balance.get('USDT', 0)
             
-            # Calcular valor de posiciones
-            positions_value = 0
-            positions_pnl = 0
+            # Usar el nuevo balance total que incluye todas las criptos
+            current_balance = balance.get('USDT', 0)  # USDT libre para trading
+            total_account_value = balance.get('total_value_usdt', current_balance)  # VALOR TOTAL
+            crypto_positions = balance.get('crypto_positions', {})
+            
+            # Calcular valor de posiciones del bot
+            bot_positions_value = 0
+            bot_positions_pnl = 0
             
             for symbol, position in self.positions.items():
                 try:
                     current_price = self.binance.get_price(symbol)
                     if current_price > 0:
                         position_value = position['quantity'] * current_price
-                        positions_value += position_value
+                        bot_positions_value += position_value
                         
-                        # Calcular PNL no realizado
+                        # Calcular PNL no realizado del bot
                         cost_basis = position['cost']
                         pnl = position_value - cost_basis
-                        positions_pnl += pnl
+                        bot_positions_pnl += pnl
                 except:
                     pass
             
-            total_value = current_balance + positions_value
-            total_pnl = total_value - self.start_balance if self.start_balance > 0 else 0
+            # PNL total (incluyendo cripto existentes)
+            total_pnl = total_account_value - self.start_balance if self.start_balance > 0 else 0
             pnl_percent = (total_pnl / self.start_balance * 100) if self.start_balance > 0 else 0
             
             return {
-                'balance': current_balance,
-                'positions_value': positions_value,
-                'total_value': total_value,
+                'balance': current_balance,  # USDT libre
+                'total_account_value': total_account_value,  # VALOR TOTAL REAL
+                'positions_value': bot_positions_value,  # Valor posiciones del bot
+                'total_value': total_account_value,  # Para compatibilidad
                 'total_pnl': total_pnl,
                 'pnl_percent': pnl_percent,
-                'unrealized_pnl': positions_pnl,
+                'unrealized_pnl': bot_positions_pnl,
                 'active_positions': len(self.positions),
                 'daily_trades': self.daily_trades,
                 'total_fees': self.total_fees,
                 'positions': self.positions.copy(),
+                'crypto_positions': crypto_positions,  # Posiciones existentes
                 'is_running': self.is_running
             }
             

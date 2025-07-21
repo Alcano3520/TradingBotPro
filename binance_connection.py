@@ -145,7 +145,7 @@ class BinanceConnection:
             return False
     
     def get_balance(self) -> Dict[str, float]:
-        """Obtener balance actual"""
+        """Obtener balance actual INCLUYENDO TODAS LAS CRIPTOMONEDAS"""
         try:
             if not self.is_connected or not self.exchange:
                 return {}
@@ -153,9 +153,51 @@ class BinanceConnection:
             time.sleep(self.rate_limit_delay)
             balance = self.exchange.fetch_balance()
             
+            # Balance USDT original
+            usdt_free = balance.get('USDT', {}).get('free', 0)
+            usdt_total = balance.get('USDT', {}).get('total', 0)
+            
+            # Calcular valor total de TODAS las criptomonedas en USDT
+            total_value_usdt = 0
+            crypto_positions = {}
+            
+            for symbol, bal in balance.items():
+                if isinstance(bal, dict) and bal.get('total', 0) > 0:
+                    total_amount = bal.get('total', 0)
+                    
+                    if symbol == 'USDT':
+                        total_value_usdt += total_amount
+                        crypto_positions[symbol] = {
+                            'amount': total_amount,
+                            'value_usdt': total_amount
+                        }
+                    else:
+                        # Obtener precio actual en USDT
+                        try:
+                            ticker_symbol = f"{symbol}USDT"
+                            ticker = self.exchange.fetch_ticker(ticker_symbol)
+                            price_usdt = float(ticker['last'])
+                            value_usdt = total_amount * price_usdt
+                            total_value_usdt += value_usdt
+                            
+                            crypto_positions[symbol] = {
+                                'amount': total_amount,
+                                'price_usdt': price_usdt,
+                                'value_usdt': value_usdt
+                            }
+                            
+                            logging.info(f"💰 {symbol}: {total_amount:.6f} = ${value_usdt:.2f}")
+                            
+                        except Exception as e:
+                            logging.warning(f"⚠️ No se pudo obtener precio de {symbol}: {e}")
+            
+            logging.info(f"💰 BALANCE TOTAL REAL: ${total_value_usdt:.2f}")
+            
             return {
-                'USDT': balance.get('USDT', {}).get('free', 0),
-                'total_usdt': balance.get('USDT', {}).get('total', 0)
+                'USDT': usdt_free,  # USDT libre para trading
+                'total_usdt': usdt_total,  # USDT total
+                'total_value_usdt': total_value_usdt,  # VALOR TOTAL DE TODA LA CUENTA
+                'crypto_positions': crypto_positions  # Detalle de cada cripto
             }
             
         except Exception as e:
